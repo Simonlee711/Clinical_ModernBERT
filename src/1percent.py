@@ -94,11 +94,11 @@ def load_pubmed_and_clean(pubmed_glob, num_workers=8):
 
 
 def load_data():
-    discharge_path = "../../data/physionet.org/files/mimic-iv-note/2.2/note/discharge.csv.gz"
-    radiology_path = "../../data/physionet.org/files/mimic-iv-note/2.2/note/radiology.csv.gz"
+    # discharge_path = "/data2/simon/data/physionet.org/files/mimic-iv-note/2.2/note/discharge.csv.gz"
+    # radiology_path = "/data2/simon/data/physionet.org/files/mimic-iv-note/2.2/note/radiology.csv.gz"
     pubmed_path_glob = "../../data/pubmed/*.xml.gz"
-    discharge = load_csv_and_clean(discharge_path, label="discharge")
-    radiology = load_csv_and_clean(radiology_path, label="radiology")
+    # discharge = load_csv_and_clean(discharge_path, label="discharge")
+    # radiology = load_csv_and_clean(radiology_path, label="radiology")
     pubmed = load_pubmed_and_clean(pubmed_path_glob)
     discharge = discharge[["clinical_text"]]
     radiology = radiology[["clinical_text"]]
@@ -149,6 +149,7 @@ class MosaicBertForMaskedLM(BertForMaskedLM):
 def main():
     df = load_data()
     # Sample 1% of the data for an end-to-end test run
+    df = df.sample(frac=0.01, random_state=42)
     logging.info(f"Using a subset of data: {df.shape[0]} records (~1% of full dataset)")
     
     avg_len = df["clinical_text"].swifter.apply(lambda x: len(x.split())).mean()
