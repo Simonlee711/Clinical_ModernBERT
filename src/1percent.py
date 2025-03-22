@@ -96,11 +96,18 @@ def load_pubmed_and_clean(pubmed_glob, num_workers=8):
     return df
 
 def load_data():
-    # Example for using PubMed data.
-    pubmed_path_glob = "../../data/pubmed/pubmed25n0001.xml.gz"
+    discharge_path = "../../data/physionet.org/files/mimic-iv-note/2.2/note/discharge.csv.gz"
+    radiology_path = "../../data/physionet.org/files/mimic-iv-note/2.2/note/radiology.csv.gz"
+    pubmed_path_glob = "../../data/pubmed/*.xml.gz"
+    discharge = load_csv_and_clean(discharge_path, label="discharge")
+    radiology = load_csv_and_clean(radiology_path, label="radiology")
     pubmed = load_pubmed_and_clean(pubmed_path_glob)
+    discharge = discharge[["clinical_text"]]
+    radiology = radiology[["clinical_text"]]
     pubmed = pubmed[["clinical_text"]]
-    return pubmed
+    combined = pd.concat([discharge, radiology, pubmed], ignore_index=True)
+    logging.info(f"Final combined dataset shape: {combined.shape}")
+    return combined
 
 class LowPrecisionLayerNorm(nn.LayerNorm):
     def forward(self, input):
@@ -228,7 +235,6 @@ def upsample_quality_sources(dataset, quality_indices, upsample_factor=2.0):
 
 def main():
     df = load_data()
-    df = df.sample(frac=0.01, random_state=42)
     logging.info(f"Using a subset of data: {df.shape[0]} records (~1% of full dataset)")
     
     avg_len = df["clinical_text"].swifter.apply(lambda x: len(x.split())).mean()
@@ -356,8 +362,8 @@ def main():
         output_dir="checkpoints_mosaic_bert_extended",
         overwrite_output_dir=True,
         run_name="mosaicbert_context_extension",
-        num_train_epochs=20,
-        per_device_train_batch_size=8,
+        num_train_epochs=200,
+        per_device_train_batch_size=64,
         save_strategy="steps",
         save_steps=100000,
         logging_steps=1000,
@@ -374,7 +380,7 @@ def main():
     
     optimizer_extension = StableAdamW(
         optimizer_grouped_parameters,
-        lr=3e-4,
+        lr=5e-5,
         betas=(0.9, 0.999),
         eps=1e-8,
         weight_decay=0.01,

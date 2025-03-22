@@ -150,7 +150,6 @@ class MosaicBertForMaskedLM(BertForMaskedLM):
             kwargs.pop('num_items_in_batch')
         return super().forward(*args, **kwargs)
 
-# Implement StableAdamW optimizer as per the requirements
 class StableAdamW(torch.optim.Optimizer):
     def __init__(self, params, lr=1e-3, betas=(0.9, 0.999), eps=1e-8, weight_decay=0.0, clipping_threshold=1.0):
         defaults = dict(lr=lr, betas=betas, eps=eps, weight_decay=weight_decay, clipping_threshold=clipping_threshold)
@@ -235,7 +234,6 @@ def upsample_quality_sources(dataset, quality_indices, upsample_factor=2.0):
 
 def main():
     df = load_data()
-    df = df.sample(frac=0.01, random_state=42)
     logging.info(f"Using a subset of data: {df.shape[0]} records (~1% of full dataset)")
     
     avg_len = df["clinical_text"].swifter.apply(lambda x: len(x.split())).mean()
@@ -282,9 +280,9 @@ def main():
         mlm_probability=0.30
     )
     
-    wandb.init(project="mosaicbert-pretrain")
+    wandb.init(project="Bioclinical ModernBERT")
     wandb.config.update({
-        "description": "MosaicBERT pretraining with 30% MLM, BF16 LN, FlashAttention, ALiBi, GLUs, dropout=0, StableAdamW optimizer"
+        "description": "Biomedical pretraining with 30% MLM, BF16 LN, FlashAttention, ALiBi, GLUs, dropout=0, StableAdamW optimizer"
     })
     
     initial_batch_size = 64
@@ -293,7 +291,7 @@ def main():
         output_dir="checkpoints_mosaic_bert",
         overwrite_output_dir=True,
         run_name="mosaicbert_pretrain",
-        num_train_epochs=200,
+        num_train_epochs=100,
         per_device_train_batch_size=initial_batch_size,
         save_strategy="steps",
         save_steps=500000,
@@ -342,6 +340,11 @@ def main():
     
     trainer.train()
     
+    # Clear VRAM before starting the next phase
+    logging.info("Clearing GPU memory after phase one")
+    del trainer
+    torch.cuda.empty_cache()
+    
     logging.info("Starting context length extension phase")
     config.rope_theta = 160000
     config.context_length = 8192
@@ -363,12 +366,12 @@ def main():
         output_dir="checkpoints_mosaic_bert_extended",
         overwrite_output_dir=True,
         run_name="mosaicbert_context_extension",
-        num_train_epochs=200,
-        per_device_train_batch_size=64,
+        num_train_epochs=100,
+        per_device_train_batch_size=16,
         save_strategy="steps",
         save_steps=100000,
         logging_steps=1000,
-        learning_rate=3e-4,
+        learning_rate=5e-5,
         bf16=True,
         report_to=["wandb"],
         save_total_limit=None,
