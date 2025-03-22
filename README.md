@@ -1,5 +1,11 @@
 # BioClinical_ModernBERT
 
+# environment
+
+`conda env create -f environment.yml`
+
+# run code
+
 `CUDA_VISIBLE_DEVICES=1 python3 1percent.py`
 
 `CUDA_VISIBLE_DEVICES=1 python3 main.py`
