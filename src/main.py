@@ -3,112 +3,105 @@ import os
 import re
 import glob
 import gzip
-os.environ["HF_HOME"] = "/data2/simon/BioClinical_ModernBERT/src"
-os.environ["HF_HUB_CACHE"] = "/data2/simon/BioClinical_ModernBERT/src/hf_cache"
-os.environ["CUDA_VISIBLE_DEVICES"] = "1"
-
 import logging
 import random
+import math
+import shutil
+
 import pandas as pd
 import numpy as np
 import torch
 import swifter
 from tqdm import tqdm
 from lxml import etree
-from transformers import AutoTokenizer, Trainer, TrainingArguments, DataCollatorForLanguageModeling
+import wandb
+
+from transformers import (
+    AutoTokenizer, 
+    Trainer, 
+    TrainingArguments, 
+    DataCollatorForLanguageModeling, 
+    BertConfig, 
+    BertForMaskedLM
+)
 from datasets import Dataset
 from typing import Optional
-import wandb
-import math
-wandb.login(key="0d3cef273ac07263f8b9035513b8693a26308dce")  # <-- Your wandb key
 
 from concurrent.futures import ProcessPoolExecutor
-
-from transformers import BertConfig, BertForMaskedLM
 import torch.nn as nn
 
-logging.basicConfig(level=logging.INFO, format='[%(asctime)s] %(levelname)s: %(message)s')
+# Explicit memory management and monitoring
+import gc
+import psutil
+import GPUtil
 
-# Define the tokenizer globally so that it is available in multiprocess workers.
-base_tokenizer = AutoTokenizer.from_pretrained("answerdotai/ModernBERT-base")
+# Set environment variables for efficient processing
+os.environ["HF_HOME"] = "./home"
+os.environ["HF_HUB_CACHE"] = "./home/hf_cache"
+os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+os.environ["TRANSFORMERS_OFFLINE"] = "1"
+os.environ["HF_DATASETS_OFFLINE"] = "1"
 
-def clean_text(text):
-    if not isinstance(text, str):
-        return text
-    text = text.replace("\n", " ").replace("\r", " ").replace("\t", " ")
-    text = re.sub(r"\s+", " ", text)
-    return text.strip()
-
-def load_csv_and_clean(path, label):
-    logging.info(f"Loading {label} notes from {path}")
-    df = pd.read_csv(path)
-    columns_to_drop = ["note_id", "subject_id", "hadm_id", "note_type", "note_seq", "charttime", "storetime"]
-    df = df.drop(columns=[col for col in columns_to_drop if col in df.columns])
-    logging.info(f"Cleaning {label} text")
-    df["clinical_text"] = df["text"].swifter.apply(clean_text)
-    df = df.drop(columns="text")
-    logging.info(f"{label} loaded with shape {df.shape}")
-    return df
-
-def extract_article_data(article):
-    def xpath_text(elem, path):
-        found = elem.find(path)
-        return found.text.strip() if found is not None and found.text else None
-
-    pmid = xpath_text(article, ".//PMID")
-    title = xpath_text(article, ".//ArticleTitle")
-    abstract_parts = article.findall(".//Abstract/AbstractText")
-    abstract = " ".join([a.text.strip() for a in abstract_parts if a is not None and a.text]) if abstract_parts else None
-
-    if title and abstract:
-        clinical_text = f"{title} {abstract}"
-    elif title:
-        clinical_text = title
-    elif abstract:
-        clinical_text = abstract
+# Memory logging function
+def log_memory_usage(logger=None):
+    # CPU Memory
+    cpu_memory_percent = psutil.virtual_memory().percent
+    if logger:
+        logger.info(f"Total RAM Used: {cpu_memory_percent}%")
     else:
-        clinical_text = None
+        print(f"Total RAM Used: {cpu_memory_percent}%")
+    
+    # GPU Memory
+    gpus = GPUtil.getGPUs()
+    for gpu in gpus:
+        if logger:
+            logger.info(f"GPU {gpu.id}: {gpu.memoryUsed}/{gpu.memoryTotal} MB")
+        else:
+            print(f"GPU {gpu.id}: {gpu.memoryUsed}/{gpu.memoryTotal} MB")
 
-    return {"clinical_text": clinical_text}
+# Explicit memory cleanup function
+def cleanup_memory():
+    gc.collect()  # Python garbage collection
+    torch.cuda.empty_cache()  # Clear CUDA memory
 
-def parse_pubmed_xml_file(file):
-    logging.info(f"Parsing {file}")
-    records = []
-    with gzip.open(file, 'rb') as f:
-        context = etree.iterparse(f, tag='PubmedArticle')
-        for _, elem in context:
-            record = extract_article_data(elem)
-            if record["clinical_text"]:
-                records.append(record)
-            elem.clear()
-    return records
-
-def load_pubmed_and_clean(pubmed_glob, num_workers=8):
-    files = glob.glob(pubmed_glob)
-    logging.info(f"Found {len(files)} PubMed XML files to parse.")
-    records = []
-    with ProcessPoolExecutor(max_workers=num_workers) as executor:
-        futures = [executor.submit(parse_pubmed_xml_file, file) for file in files]
-        for future in tqdm(futures, desc="Processing PubMed files"):
-            records.extend(future.result())
-    df = pd.DataFrame(records)
-    logging.info(f"Loaded {df.shape[0]} PubMed articles with clinical text.")
+# Memory-efficient data type reduction
+def reduce_mem_usage(df):
+    for col in df.columns:
+        col_type = df[col].dtype
+        if col_type != object:
+            c_min = df[col].min()
+            c_max = df[col].max()
+            if str(col_type)[:3] == 'int':
+                if c_min > np.iinfo(np.int8).min and c_max < np.iinfo(np.int8).max:
+                    df[col] = df[col].astype(np.int8)
+                elif c_min > np.iinfo(np.int16).min and c_max < np.iinfo(np.int16).max:
+                    df[col] = df[col].astype(np.int16)
+                elif c_min > np.iinfo(np.int32).min and c_max < np.iinfo(np.int32).max:
+                    df[col] = df[col].astype(np.int32)
+            elif str(col_type)[:5] == 'float':
+                if c_min > np.finfo(np.float16).min and c_max < np.finfo(np.float16).max:
+                    df[col] = df[col].astype(np.float16)
+                elif c_min > np.finfo(np.float32).min and c_max < np.finfo(np.float32).max:
+                    df[col] = df[col].astype(np.float32)
     return df
 
-def load_data():
-    discharge_path = "../../data/physionet.org/files/mimic-iv-note/2.2/note/discharge.csv.gz"
-    radiology_path = "../../data/physionet.org/files/mimic-iv-note/2.2/note/radiology.csv.gz"
-    pubmed_path_glob = "../../data/pubmed/*.xml.gz"
-    discharge = load_csv_and_clean(discharge_path, label="discharge")
-    radiology = load_csv_and_clean(radiology_path, label="radiology")
-    pubmed = load_pubmed_and_clean(pubmed_path_glob)
-    discharge = discharge[["clinical_text"]]
-    radiology = radiology[["clinical_text"]]
-    pubmed = pubmed[["clinical_text"]]
-    combined = pd.concat([discharge, radiology, pubmed], ignore_index=True)
-    logging.info(f"Final combined dataset shape: {combined.shape}")
-    return combined
+# Dynamically adjust batch size based on available memory
+def get_dynamic_batch_size(initial_batch_size=128, min_batch_size=32):
+    try:
+        total_memory = torch.cuda.get_device_properties(0).total_memory
+        reserved_memory = torch.cuda.memory_reserved(0)
+        available_memory = total_memory - reserved_memory
+        
+        # Memory-based batch size adjustment
+        if available_memory < 10 * 1024 * 1024 * 1024:  # Less than 10GB
+            return max(initial_batch_size // 4, min_batch_size)
+        elif available_memory < 20 * 1024 * 1024 * 1024:  # Less than 20GB
+            return initial_batch_size // 2
+        return initial_batch_size
+    except Exception:
+        return initial_batch_size
 
+# Low Precision Layer Norm for memory efficiency
 class LowPrecisionLayerNorm(nn.LayerNorm):
     def forward(self, input):
         orig_dtype = input.dtype
@@ -117,6 +110,7 @@ class LowPrecisionLayerNorm(nn.LayerNorm):
         out = super().forward(input)
         return out.to(orig_dtype)
 
+# Existing configuration and model classes with some modifications
 class MosaicBertConfig(BertConfig):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -232,9 +226,202 @@ def upsample_quality_sources(dataset, quality_indices, upsample_factor=2.0):
                 upsampled_data.append(example)
     return Dataset.from_list(upsampled_data)
 
+# Rest of the existing utilities remain the same
+wandb.login(key="0d3cef273ac07263f8b9035513b8693a26308dce")
+
+logging.basicConfig(level=logging.INFO, format='[%(asctime)s] %(levelname)s: %(message)s')
+
+# Define the tokenizer globally
+base_tokenizer = AutoTokenizer.from_pretrained("./models/ModernBERT-base/")
+
+def clean_text(text):
+    if not isinstance(text, str):
+        return text
+    text = text.replace("\n", " ").replace("\r", " ").replace("\t", " ")
+    text = re.sub(r"\s+", " ", text)
+    return text.strip()
+
+# Memory-efficient load_csv_and_clean
+def load_csv_and_clean(path, label, chunk_size=100000):
+    logging.info(f"Loading {label} notes from {path}")
+    dfs = []
+    for chunk in pd.read_csv(path, chunksize=chunk_size):
+        columns_to_drop = ["note_id", "subject_id", "hadm_id", "note_type", "note_seq", "charttime", "storetime"]
+        chunk = chunk.drop(columns=[col for col in columns_to_drop if col in chunk.columns])
+        chunk["clinical_text"] = chunk["text"].swifter.apply(clean_text)
+        chunk = chunk.drop(columns="text")
+        dfs.append(chunk)
+    df = pd.concat(dfs)
+    logging.info(f"{label} loaded with shape {df.shape}")
+    return df
+
+def extract_article_data(article):
+    def xpath_text(elem, path):
+        found = elem.find(path)
+        return found.text.strip() if found is not None and found.text else None
+
+    pmid = xpath_text(article, ".//PMID")
+    title = xpath_text(article, ".//ArticleTitle")
+    abstract_parts = article.findall(".//Abstract/AbstractText")
+    abstract = " ".join([a.text.strip() for a in abstract_parts if a is not None and a.text]) if abstract_parts else None
+
+    if title and abstract:
+        clinical_text = f"{title} {abstract}"
+    elif title:
+        clinical_text = title
+    elif abstract:
+        clinical_text = abstract
+    else:
+        clinical_text = None
+
+    return {"clinical_text": clinical_text}
+
+def parse_pubmed_xml_file(file):
+    logging.info(f"Parsing {file}")
+    records = []
+    with gzip.open(file, 'rb') as f:
+        context = etree.iterparse(f, tag='PubmedArticle')
+        for _, elem in context:
+            record = extract_article_data(elem)
+            if record["clinical_text"]:
+                records.append(record)
+            elem.clear()
+    return records
+
+def load_pubmed_and_clean(pubmed_glob, num_workers=8):
+    files = glob.glob(pubmed_glob)
+    logging.info(f"Found {len(files)} PubMed XML files to parse.")
+    records = []
+    with ProcessPoolExecutor(max_workers=num_workers) as executor:
+        futures = [executor.submit(parse_pubmed_xml_file, file) for file in files]
+        for future in tqdm(futures, desc="Processing PubMed files"):
+            records.extend(future.result())
+    df = pd.DataFrame(records)
+    logging.info(f"Loaded {df.shape[0]} PubMed articles with clinical text.")
+    return df
+
+# Other existing utility functions remain the same (extract_article_data, parse_pubmed_xml_file, etc.)
+
+def load_data():
+    discharge_path = "./data/mimic-note/discharge.csv.gz"
+    radiology_path = "./data/mimic-note/radiology.csv.gz"
+    pubmed_path_glob = "./data/pubmed/*.xml"
+    discharge = load_csv_and_clean(discharge_path, label="discharge")
+    radiology = load_csv_and_clean(radiology_path, label="radiology")
+    pubmed = load_pubmed_and_clean(pubmed_path_glob)
+    icd_code = pd.read_csv("./data/coded/icd_codes.csv")
+    procedure_code = pd.read_csv("./data/coded/icd_procedures.csv")
+    hcpcs_code = pd.read_csv("./data/coded/hcpcs_codes.csv")
+    icd_code["clinical_text"] = icd_code["text"]
+    procedure_code["clinical_text"] = procedure_code["text"]
+    hcpcs_code["clinical_text"] = hcpcs_code["text"]
+    
+    icd_code = icd_code[["clinical_text"]]
+    procedure_code = procedure_code[["clinical_text"]]
+    hcpcs_code = hcpcs_code[["clinical_text"]]
+    
+    discharge = discharge[["clinical_text"]]
+    radiology = radiology[["clinical_text"]]
+    pubmed = pubmed[["clinical_text"]]
+    combined = pd.concat([discharge, radiology, pubmed, icd_code, procedure_code, hcpcs_code], ignore_index=True) # 
+    logging.info(f"Final combined dataset shape: {combined.shape}")
+    return combined
+
+# Existing StableAdamW optimizer remains the same
+
+def create_extended_context_dataset(dataset, max_length=8192):
+    def combine_examples(examples, target_length):
+        combined_texts = []
+        current_text = ""
+        for text in examples:
+            if len(current_text) + len(text) <= target_length:
+                current_text += text + " "
+            else:
+                if current_text:
+                    combined_texts.append(current_text.strip())
+                current_text = text + " "
+        if current_text:
+            combined_texts.append(current_text.strip())
+        return combined_texts
+
+    all_texts = dataset["clinical_text"]
+    long_texts = combine_examples(all_texts, max_length)
+    return Dataset.from_dict({"clinical_text": long_texts})
+
+def upsample_quality_sources(dataset, quality_indices, upsample_factor=2.0):
+    upsampled_data = []
+    for idx, example in enumerate(dataset):
+        upsampled_data.append(example)
+        if idx in quality_indices:
+            for _ in range(int(upsample_factor - 1)):
+                upsampled_data.append(example)
+    return Dataset.from_list(upsampled_data)
+
 def main():
+    # Initialize wandb
+    gc.collect()
+    wandb.init(
+        project="MosaicBERT-Pretraining", 
+        name="clinical-text-pretraining",
+        config={
+            "model_type": "MosaicBERT",
+            "context_length": 8192,
+            "initial_learning_rate": 8e-4,
+            "extended_learning_rate": 5e-5,
+            "batch_size_initial": get_dynamic_batch_size(),
+            "batch_size_extended": get_dynamic_batch_size(initial_batch_size=128),
+            "mlm_probability": 0.30,
+            "epochs_initial": 100,
+            "epochs_extended": 100
+        }
+    )
+
+    # Custom checkpoint saving function
+    def save_comprehensive_checkpoint(trainer, checkpoint_dir):
+        import os
+        import time
+        
+        # Create a unique checkpoint directory
+        os.makedirs(checkpoint_dir, exist_ok=True)
+
+        # Save model weights
+        trainer.save_model(checkpoint_dir)
+
+        # Explicitly save tokenizer files
+        tokenizer = trainer.tokenizer
+        tokenizer.save_pretrained(checkpoint_dir)
+
+        # Logging for verification
+        logging.info(f"Saved comprehensive checkpoint to {checkpoint_dir}")
+        
+        # List and log saved files
+        saved_files = os.listdir(checkpoint_dir)
+        for file in saved_files:
+            logging.info(f"Saved file: {file}")
+
+    # Custom Trainer with enhanced checkpoint saving
+    class CustomTrainer(Trainer):
+        def save_model(self, output_dir=None, _internal_call=False):
+            # Determine output directory
+            if output_dir is None:
+                output_dir = self.args.output_dir
+            
+            # Create a timestamped checkpoint directory
+            timestamp = int(time.time())
+            checkpoint_dir = os.path.join(output_dir, f"checkpoint-{timestamp}")
+            
+            # Use the comprehensive checkpoint saving method
+            save_comprehensive_checkpoint(self, checkpoint_dir)
+
+    # Log initial memory usage
+    log_memory_usage(logging)
+
+    # Ensure output directories exist
+    os.makedirs("checkpoints_mosaic_bert", exist_ok=True)
+    os.makedirs("final_mosaic_bert", exist_ok=True)
+
     df = load_data()
-    logging.info(f"Using a subset of data: {df.shape[0]} records (~1% of full dataset)")
+    logging.info(f"Using a subset of data: {df.shape[0]} records")
     
     avg_len = df["clinical_text"].swifter.apply(lambda x: len(x.split())).mean()
     mem_mb = df.memory_usage(deep=True).sum() / (1024 ** 2)
@@ -245,9 +432,20 @@ def main():
     dataset = Dataset.from_pandas(df)
 
     def tokenize_function(examples):
-        return base_tokenizer(examples["clinical_text"], truncation=True, padding="max_length", max_length=128)
+        return base_tokenizer(
+            examples["clinical_text"], 
+            truncation=True, 
+            padding="max_length", 
+            max_length=128,
+            return_tensors='pt'
+        )
 
-    tokenized_dataset = dataset.map(tokenize_function, batched=True, num_proc=10, remove_columns=["clinical_text"])
+    tokenized_dataset = dataset.map(
+        tokenize_function, 
+        batched=True, 
+        num_proc=20, 
+        remove_columns=["clinical_text"]
+    )
     tokenized_dataset = tokenized_dataset.remove_columns(
         [col for col in tokenized_dataset.column_names if col.startswith("__")]
     )
@@ -260,7 +458,7 @@ def main():
         base_tokenizer.add_tokens(dummy_tokens, special_tokens=False)
     logging.info(f"Tokenizer vocab size is now {len(base_tokenizer)} (was {vocab_size_before})")
     
-    config = MosaicBertConfig.from_pretrained("answerdotai/ModernBERT-base")
+    config = MosaicBertConfig.from_pretrained("./models/ModernBERT-base")
     config.vocab_size = len(base_tokenizer)
     config.attention_probs_dropout_prob = 0.0
     config.hidden_dropout_prob = 0.0
@@ -271,7 +469,7 @@ def main():
     config.rope_theta = 10000
     config.context_length = 1024
     
-    model = MosaicBertForMaskedLM.from_pretrained("answerdotai/ModernBERT-base", config=config)
+    model = MosaicBertForMaskedLM.from_pretrained("./models/ModernBERT-base", config=config)
     model.resize_token_embeddings(len(base_tokenizer))
     
     data_collator = DataCollatorForLanguageModeling(
@@ -279,11 +477,6 @@ def main():
         mlm=True,
         mlm_probability=0.30
     )
-    
-    wandb.init(project="Bioclinical ModernBERT")
-    wandb.config.update({
-        "description": "Biomedical pretraining with 30% MLM, BF16 LN, FlashAttention, ALiBi, GLUs, dropout=0, StableAdamW optimizer"
-    })
     
     initial_batch_size = 64
     
@@ -298,7 +491,7 @@ def main():
         logging_steps=1000,
         learning_rate=8e-4,
         bf16=True,
-        report_to=["wandb"],
+        report_to=[],  # Removed wandb
         save_total_limit=None,
         remove_unused_columns=False,
         local_rank=-1,
@@ -329,7 +522,7 @@ def main():
         clipping_threshold=1.0
     )
     
-    trainer = Trainer(
+    trainer = CustomTrainer(
         model=model,
         args=training_args,
         data_collator=data_collator,
@@ -357,7 +550,7 @@ def main():
     tokenized_extended_dataset = extended_dataset.map(
         tokenize_extended_function, 
         batched=True, 
-        num_proc=10, 
+        num_proc=20, 
         remove_columns=["clinical_text"]
     )
     tokenized_extended_dataset = tokenized_extended_dataset.with_format("torch")
@@ -367,13 +560,13 @@ def main():
         overwrite_output_dir=True,
         run_name="mosaicbert_context_extension",
         num_train_epochs=100,
-        per_device_train_batch_size=16,
+        per_device_train_batch_size=64,
         save_strategy="steps",
         save_steps=100000,
         logging_steps=1000,
         learning_rate=5e-5,
         bf16=True,
-        report_to=["wandb"],
+        report_to=[],  # Removed wandb
         save_total_limit=None,
         remove_unused_columns=False,
         local_rank=-1,
@@ -391,7 +584,7 @@ def main():
         clipping_threshold=1.0
     )
     
-    trainer_extension = Trainer(
+    trainer_extension = CustomTrainer(
         model=model,
         args=training_args_extension,
         data_collator=data_collator,
@@ -406,7 +599,7 @@ def main():
     quality_indices = list(range(0, len(tokenized_extended_dataset) // 5))
     upsampled_dataset = upsample_quality_sources(tokenized_extended_dataset, quality_indices)
     
-    trainer_final = Trainer(
+    trainer_final = CustomTrainer(
         model=model,
         args=training_args_extension,
         data_collator=data_collator,
@@ -417,8 +610,20 @@ def main():
     
     trainer_final.train()
     
-    trainer_final.save_model("final_mosaic_bert")
-    base_tokenizer.save_pretrained("final_mosaic_bert")
+    # Ensure final checkpoint directory exists and is empty
+    import shutil
+    final_model_path = "final_mosaic_bert"
+    shutil.rmtree(final_model_path, ignore_errors=True)
+    os.makedirs(final_model_path)
+    
+    trainer_final.save_model(final_model_path)
+    base_tokenizer.save_pretrained(final_model_path)
+    
+    # Periodic memory cleanup
+    cleanup_memory()
+    log_memory_usage(logging)
+
+    # Final stages of training remain the same
     wandb.finish()
 
 if __name__ == "__main__":
