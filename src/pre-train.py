@@ -23,7 +23,8 @@ from transformers import (
     TrainingArguments, 
     DataCollatorForLanguageModeling, 
     BertConfig, 
-    BertForMaskedLM
+    BertForMaskedLM,
+    TrainerCallback
 )
 from datasets import Dataset
 from typing import Optional
@@ -39,7 +40,7 @@ import GPUtil
 # Set environment variables for efficient processing
 os.environ["HF_HOME"] = "./home"
 os.environ["HF_HUB_CACHE"] = "./home/hf_cache"
-os.environ["CUDA_VISIBLE_DEVICES"] = "3"
+os.environ["CUDA_VISIBLE_DEVICES"] = "2"
 os.environ["TRANSFORMERS_OFFLINE"] = "1"
 os.environ["HF_DATASETS_OFFLINE"] = "1"
 
@@ -227,13 +228,167 @@ def upsample_quality_sources(dataset, quality_indices, upsample_factor=2.0):
                 upsampled_data.append(example)
     return Dataset.from_list(upsampled_data)
 
-# Rest of the existing utilities remain the same
-wandb.login(key="0d3cef273ac07263f8b9035513b8693a26308dce")
+def calculate_training_parameters(dataset, 
+                                  base_batch_size=128, 
+                                  base_epochs=50, 
+                                  memory_limit_gb=32, 
+                                  tokens_per_sample=512):
+    """
+    Dynamically calculate training parameters based on dataset characteristics
+    
+    Args:
+        dataset (Dataset): Hugging Face dataset
+        base_batch_size (int): Initial batch size to start with
+        base_epochs (int): Default number of epochs
+        memory_limit_gb (int): Maximum GPU memory limit
+        tokens_per_sample (int): Average number of tokens per sample
+    
+    Returns:
+        dict: Computed training parameters
+    """
+    total_samples = len(dataset)
+    total_tokens = total_samples * tokens_per_sample
+    
+    try:
+        total_gpu_memory = torch.cuda.get_device_properties(0).total_memory / (1024**3)
+        available_gpu_memory = total_gpu_memory * 0.9
+        
+        if available_gpu_memory < memory_limit_gb:
+            batch_size = max(base_batch_size // 2, 32)
+        else:
+            batch_size = base_batch_size
+    except:
+        batch_size = base_batch_size
+    
+    if total_samples < 10000:
+        epochs = min(base_epochs * 2, 100)
+    elif total_samples < 100000:
+        epochs = base_epochs
+    elif total_samples < 1000000:
+        epochs = max(base_epochs // 2, 10)
+    else:
+        epochs = max(base_epochs // 4, 5)
+    
+    steps_per_epoch = math.ceil(total_samples / batch_size)
+    total_steps = steps_per_epoch * epochs
+    warmup_steps = max(int(0.1 * total_steps), 100)
+    
+    logging.info(f"Dataset Analysis:")
+    logging.info(f"Total Samples: {total_samples}")
+    logging.info(f"Total Tokens: {total_tokens:,}")
+    logging.info(f"Computed Batch Size: {batch_size}")
+    logging.info(f"Computed Epochs: {epochs}")
+    logging.info(f"Total Training Steps: {total_steps}")
+    logging.info(f"Warmup Steps: {warmup_steps}")
+    
+    return {
+        "batch_size": batch_size,
+        "epochs": epochs,
+        "total_steps": total_steps,
+        "warmup_steps": warmup_steps,
+        "tokens_per_sample": tokens_per_sample
+    }
 
-logging.basicConfig(level=logging.INFO, format='[%(asctime)s] %(levelname)s: %(message)s')
+# Custom dynamic data collator that updates its masking probability.
+class DynamicDataCollatorForLanguageModeling(DataCollatorForLanguageModeling):
+    def __init__(self, tokenizer, initial_mlm_probability=0.30, final_mlm_probability=0.15, total_epochs=50, **kwargs):
+        super().__init__(tokenizer=tokenizer, mlm=True, mlm_probability=initial_mlm_probability, **kwargs)
+        self.initial_mlm_probability = initial_mlm_probability
+        self.final_mlm_probability = final_mlm_probability
+        self.total_epochs = total_epochs
 
-# Define the tokenizer globally
-base_tokenizer = AutoTokenizer.from_pretrained("./models/ModernBERT-base/")
+    def update_epoch(self, current_epoch):
+        # Linear schedule from initial to final over total_epochs
+        fraction = current_epoch / max(1, self.total_epochs - 1)
+        new_prob = self.initial_mlm_probability - ((self.initial_mlm_probability - self.final_mlm_probability) * fraction)
+        # Clamp the new probability to be within [0, 1]
+        new_prob = max(min(new_prob, 1.0), 0.0)
+        self.mlm_probability = new_prob
+
+
+# Callback to update the collator at each epoch
+class DynamicMaskingCallback(TrainerCallback):
+    def __init__(self, data_collator):
+        self.data_collator = data_collator
+
+    def on_epoch_begin(self, args, state, control, **kwargs):
+        current_epoch = state.epoch
+        self.data_collator.update_epoch(current_epoch)
+        wandb.log({"mlm_probability": self.data_collator.mlm_probability})
+        return control
+
+# Custom Trainer with enhanced accuracy tracking, gradient norm logging, and modified training step for gradient accumulation.
+class CustomTrainer(Trainer):
+    def compute_loss(self, model, inputs, return_outputs=False, num_items_in_batch=None):
+        outputs = model(**inputs)
+        loss = outputs.loss
+
+        # Calculate MLM accuracy
+        predictions = outputs.logits
+        labels = inputs.get("labels")
+        masked_lm_mask = (labels != -100)
+        masked_predictions = predictions[masked_lm_mask]
+        masked_labels = labels[masked_lm_mask]
+
+        top1_predictions = masked_predictions.argmax(dim=-1)
+        top1_accuracy = (top1_predictions == masked_labels).float().mean().item()
+
+        top5_predictions = torch.topk(masked_predictions, k=5, dim=-1).indices
+        top5_accuracy = torch.any(top5_predictions == masked_labels.unsqueeze(1), dim=1).float().mean().item()
+
+        top10_predictions = torch.topk(masked_predictions, k=10, dim=-1).indices
+        top10_accuracy = torch.any(top10_predictions == masked_labels.unsqueeze(1), dim=1).float().mean().item()
+
+        top25_predictions = torch.topk(masked_predictions, k=25, dim=-1).indices
+        top25_accuracy = torch.any(top25_predictions == masked_labels.unsqueeze(1), dim=1).float().mean().item()
+
+        wandb.log({
+            "mlm_loss": loss.item(),
+            "top1_accuracy": top1_accuracy,
+            "top5_accuracy": top5_accuracy,
+            "top10_accuracy": top10_accuracy,
+            "top25_accuracy": top25_accuracy,
+        })
+        return (loss, outputs) if return_outputs else loss
+
+    def training_step(self, model, inputs, num_items_in_batch=None):
+        model.train()
+        inputs = self._prepare_inputs(inputs)
+        loss, outputs = self.compute_loss(model, inputs, return_outputs=True, num_items_in_batch=num_items_in_batch)
+        # Adjust loss for gradient accumulation if applicable.
+        loss = loss / self.args.gradient_accumulation_steps
+        self.optimizer.zero_grad()
+        loss.backward()
+        # Compute gradient norm for logging.
+        total_norm = 0.0
+        parameters = [p for p in model.parameters() if p.grad is not None]
+        if parameters:
+            total_norm = torch.norm(torch.stack([p.grad.detach().norm(2) for p in parameters]), 2).item()
+        wandb.log({"gradient_norm": total_norm})
+        return loss.detach()
+
+    def save_model(self, output_dir=None, _internal_call=False):
+        if output_dir is None:
+            output_dir = self.args.output_dir
+        
+        timestamp = int(time.time())
+        checkpoint_dir = os.path.join(output_dir, f"checkpoint-{timestamp}")
+        
+        os.makedirs(checkpoint_dir, exist_ok=True)
+        self.model.save_pretrained(checkpoint_dir)
+        self.tokenizer.save_pretrained(checkpoint_dir)
+        logging.info(f"Saved comprehensive checkpoint to {checkpoint_dir}")
+        for file in os.listdir(checkpoint_dir):
+            logging.info(f"Saved file: {file}")
+
+
+def create_cosine_lr_scheduler(optimizer, num_training_steps, num_warmup_steps):
+    def lr_lambda(current_step: int):
+        if current_step < num_warmup_steps:
+            return float(current_step) / float(max(1, num_warmup_steps))
+        progress = float(current_step - num_warmup_steps) / float(max(1, num_training_steps - num_warmup_steps))
+        return max(0.0, 0.5 * (1.0 + math.cos(math.pi * progress)))
+    return torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
 
 def clean_text(text):
     if not isinstance(text, str):
@@ -242,7 +397,6 @@ def clean_text(text):
     text = re.sub(r"\s+", " ", text)
     return text.strip()
 
-# Memory-efficient load_csv_and_clean
 def load_csv_and_clean(path, label, chunk_size=100000):
     logging.info(f"Loading {label} notes from {path}")
     dfs = []
@@ -280,7 +434,6 @@ def extract_article_data(article):
 def parse_pubmed_xml_file(file):
     logging.info(f"Parsing {file}")
     records = []
-    # Opening the file as plain XML rather than gzipped
     with open(file, 'rb') as f:
         context = etree.iterparse(f, tag='PubmedArticle')
         for _, elem in context:
@@ -301,7 +454,6 @@ def load_pubmed_and_clean(pubmed_glob, num_workers=8):
     df = pd.DataFrame(records)
     logging.info(f"Loaded {df.shape[0]} PubMed articles with clinical text.")
     return df
-
 
 def load_data():
     discharge_path = "./data/mimic-note/discharge.csv.gz"
@@ -324,102 +476,52 @@ def load_data():
     discharge = discharge[["clinical_text"]]
     radiology = radiology[["clinical_text"]]
     pubmed = pubmed[["clinical_text"]]
-    combined = pd.concat([ discharge, radiology, pubmed, icd_code, procedure_code, hcpcs_code], ignore_index=True) # discharge, radiology, pubmed,
+    #combined = pd.concat([ icd_code, procedure_code, hcpcs_code], ignore_index=True)
+    combined = pd.concat([discharge, radiology, pubmed, icd_code, procedure_code, hcpcs_code], ignore_index=True) # discharge, radiology, pubmed,
     logging.info(f"Final combined dataset shape: {combined.shape}")
+    #combined = combined.sample(100)
     return combined
 
-# Existing StableAdamW optimizer remains the same
-
-def create_extended_context_dataset(dataset, max_length=8192):
-    def combine_examples(examples, target_length):
-        combined_texts = []
-        current_text = ""
-        for text in examples:
-            if len(current_text) + len(text) <= target_length:
-                current_text += text + " "
-            else:
-                if current_text:
-                    combined_texts.append(current_text.strip())
-                current_text = text + " "
-        if current_text:
-            combined_texts.append(current_text.strip())
-        return combined_texts
-
-    all_texts = dataset["clinical_text"]
-    long_texts = combine_examples(all_texts, max_length)
-    return Dataset.from_dict({"clinical_text": long_texts})
-
-def upsample_quality_sources(dataset, quality_indices, upsample_factor=2.0):
-    upsampled_data = []
-    for idx, example in enumerate(dataset):
-        upsampled_data.append(example)
-        if idx in quality_indices:
-            for _ in range(int(upsample_factor - 1)):
-                upsampled_data.append(example)
-    return Dataset.from_list(upsampled_data)
+wandb.login(key="0d3cef273ac07263f8b9035513b8693a26308dce")
+logging.basicConfig(level=logging.INFO, format='[%(asctime)s] %(levelname)s: %(message)s')
+base_tokenizer = AutoTokenizer.from_pretrained("./models/ModernBERT-base/")
 
 def main():
-    # Initialize wandb
     gc.collect()
+    resume_checkpoint = os.environ.get("RESUME_CHECKPOINT", None)  # Optionally set an env variable to resume
+    
     wandb.init(
-        project="BioClinical ModernBERT", 
+        project="BioClinical ModernBERT_e2e2", 
         name="clinical-text-pretraining",
         config={
             "model_type": "MosaicBERT",
             "context_length": 8192,
-            "initial_learning_rate": 8e-4,
-            "extended_learning_rate": 5e-5,
+            "initial_learning_rate": 3e-4,
+            "extended_learning_rate": 1e-5,
             "batch_size_initial": get_dynamic_batch_size(),
             "batch_size_extended": get_dynamic_batch_size(initial_batch_size=128),
             "mlm_probability": 0.30,
-            "epochs_initial": 100,
-            "epochs_extended": 100
+            "warmup_ratio": 0.1,
+            "epochs_initial": 50,
+            "epochs_extended": 50,
+            "gradient_accumulation_steps": 4
         }
     )
 
-    # Custom checkpoint saving function
     def save_comprehensive_checkpoint(trainer, checkpoint_dir):
-        import os
-        # Create a unique checkpoint directory
         os.makedirs(checkpoint_dir, exist_ok=True)
-        
-        # Save model weights directly without recursive call
         trainer.model.save_pretrained(checkpoint_dir)
-        
-        # Explicitly save tokenizer files
         trainer.tokenizer.save_pretrained(checkpoint_dir)
-        
-        # Logging for verification
         logging.info(f"Saved comprehensive checkpoint to {checkpoint_dir}")
-        
-        # List and log saved files
         for file in os.listdir(checkpoint_dir):
             logging.info(f"Saved file: {file}")
     
-    # Custom Trainer with enhanced checkpoint saving
-    class CustomTrainer(Trainer):
-        def save_model(self, output_dir=None, _internal_call=False):
-            # Determine output directory
-            if output_dir is None:
-                output_dir = self.args.output_dir
-            
-            # Create a timestamped checkpoint directory
-            timestamp = int(time.time())
-            checkpoint_dir = os.path.join(output_dir, f"checkpoint-{timestamp}")
-            
-            # Use the comprehensive checkpoint saving method
-            save_comprehensive_checkpoint(self, checkpoint_dir)
-
-    # Log initial memory usage
     log_memory_usage(logging)
-
-    # Ensure output directories exist
-    os.makedirs("checkpoints_mosaic_bert", exist_ok=True)
-    os.makedirs("final_mosaic_bert", exist_ok=True)
-
+    os.makedirs("checkpoints_mosaic_bert_smaller_pretrain2", exist_ok=True)
+    os.makedirs("final_mosaic_bert_smaller_pretrain2", exist_ok=True)
+    
     df = load_data()
     logging.info(f"Using a subset of data: {df.shape[0]} records")
-    
     avg_len = df["clinical_text"].swifter.apply(lambda x: len(x.split())).mean()
     mem_mb = df.memory_usage(deep=True).sum() / (1024 ** 2)
     logging.info(f"Average token count: {avg_len:.2f}")
@@ -427,7 +529,7 @@ def main():
     
     df = df.reset_index(drop=True)
     dataset = Dataset.from_pandas(df)
-
+    
     def tokenize_function(examples):
         return base_tokenizer(
             examples["clinical_text"], 
@@ -436,7 +538,7 @@ def main():
             max_length=128,
             return_tensors='pt'
         )
-
+    
     tokenized_dataset = dataset.map(
         tokenize_function, 
         batched=True, 
@@ -469,26 +571,30 @@ def main():
     model = MosaicBertForMaskedLM.from_pretrained("./models/ModernBERT-base", config=config)
     model.resize_token_embeddings(len(base_tokenizer))
     
-    data_collator = DataCollatorForLanguageModeling(
+    # Use the dynamic collator with a schedule from 0.30 to 0.15 over epochs.
+    initial_epochs = 50
+    data_collator = DynamicDataCollatorForLanguageModeling(
         tokenizer=base_tokenizer,
-        mlm=True,
-        mlm_probability=0.30
+        initial_mlm_probability=0.30,
+        final_mlm_probability=0.15,
+        total_epochs=initial_epochs
     )
     
-    initial_batch_size = 512
+    training_params = calculate_training_parameters(dataset)
     
     training_args = TrainingArguments(
-        output_dir="checkpoints_mosaic_bert",
+        output_dir="checkpoints_mosaic_bert_smaller_pretrain",
         overwrite_output_dir=True,
         run_name="mosaicbert_pretrain",
-        num_train_epochs=1,
-        per_device_train_batch_size=initial_batch_size,
+        num_train_epochs=training_params["epochs"],
+        per_device_train_batch_size=training_params["batch_size"],
+        gradient_accumulation_steps=wandb.config.gradient_accumulation_steps,
         save_strategy="steps",
-        save_steps=5000000,
-        logging_steps=1000000,
-        learning_rate=8e-4,
+        save_steps=20000,
+        logging_steps=20000,
+        learning_rate=3e-4,
         bf16=True,
-        report_to=["wandb"],  # Removed wandb
+        report_to=["wandb"],
         save_total_limit=None,
         remove_unused_columns=False,
         local_rank=-1,
@@ -497,6 +603,9 @@ def main():
         no_cuda=False,
         optim="adamw_torch"
     )
+    
+    num_training_steps = len(tokenized_dataset) * training_args.num_train_epochs // training_args.per_device_train_batch_size
+    num_warmup_steps = int(0.1 * num_training_steps)
     
     no_decay = ["bias", "LayerNorm.weight"]
     optimizer_grouped_parameters = [
@@ -512,7 +621,7 @@ def main():
     
     optimizer = StableAdamW(
         optimizer_grouped_parameters,
-        lr=8e-4,
+        lr=5e-4,
         betas=(0.9, 0.999),
         eps=1e-8,
         weight_decay=0.01,
@@ -528,21 +637,35 @@ def main():
         optimizers=(optimizer, None)
     )
     
-    trainer.train()
+    # Add dynamic masking callback.
+    trainer.add_callback(DynamicMaskingCallback(data_collator))
     
-    # Clear VRAM before starting the next phase
+    lr_scheduler = create_cosine_lr_scheduler(
+        trainer.optimizer, 
+        num_training_steps=num_training_steps, 
+        num_warmup_steps=num_warmup_steps
+    )
+    trainer.lr_scheduler = lr_scheduler
+    
+    trainer.train(resume_from_checkpoint=resume_checkpoint)
+    
     logging.info("Clearing GPU memory after phase one")
     del trainer
     torch.cuda.empty_cache()
     
     logging.info("Starting context length extension phase")
     config.rope_theta = 160000
-    config.context_length = 8192
+    config.context_length = 2048
     
-    extended_dataset = create_extended_context_dataset(dataset, max_length=8192)
+    extended_dataset = create_extended_context_dataset(dataset, max_length=2048)
     
     def tokenize_extended_function(examples):
-        return base_tokenizer(examples["clinical_text"], truncation=True, padding="max_length", max_length=8192)
+        return base_tokenizer(
+            examples["clinical_text"], 
+            truncation=True, 
+            padding="max_length", 
+            max_length=2048
+        )
     
     tokenized_extended_dataset = extended_dataset.map(
         tokenize_extended_function, 
@@ -552,18 +675,26 @@ def main():
     )
     tokenized_extended_dataset = tokenized_extended_dataset.with_format("torch")
     
+    extended_training_params = calculate_training_parameters(
+        extended_dataset, 
+        base_batch_size=16, 
+        memory_limit_gb=32, 
+        tokens_per_sample=2048
+    )
+    
     training_args_extension = TrainingArguments(
-        output_dir="checkpoints_mosaic_bert_extended",
+        output_dir="checkpoints_mosaic_bert_extended_smaller_pretrain",
         overwrite_output_dir=True,
         run_name="mosaicbert_context_extension",
-        num_train_epochs=1,
-        per_device_train_batch_size=64,
+        num_train_epochs=extended_training_params["epochs"],
+        per_device_train_batch_size=extended_training_params["batch_size"],
+        gradient_accumulation_steps=wandb.config.gradient_accumulation_steps,
         save_strategy="steps",
-        save_steps=50000,
-        logging_steps=100000,
-        learning_rate=5e-5,
+        save_steps=20000,
+        logging_steps=20000,
+        learning_rate=1e-5,
         bf16=True,
-        report_to=["wandb"],  # Removed wandb
+        report_to=["wandb"],
         save_total_limit=None,
         remove_unused_columns=False,
         local_rank=-1,
@@ -572,9 +703,12 @@ def main():
         no_cuda=False,
     )
     
+    num_extended_steps = extended_training_params["total_steps"]
+    num_extended_warmup_steps = extended_training_params["warmup_steps"]
+    
     optimizer_extension = StableAdamW(
         optimizer_grouped_parameters,
-        lr=5e-5,
+        lr=3e-5,
         betas=(0.9, 0.999),
         eps=1e-8,
         weight_decay=0.01,
@@ -590,37 +724,25 @@ def main():
         optimizers=(optimizer_extension, None)
     )
     
+    lr_scheduler_extension = create_cosine_lr_scheduler(
+        trainer_extension.optimizer, 
+        num_training_steps=num_extended_steps, 
+        num_warmup_steps=num_extended_warmup_steps
+    )
+    trainer_extension.lr_scheduler = lr_scheduler_extension
+    
     trainer_extension.train()
     
-    logging.info("Starting upsampled quality sources phase")
-    quality_indices = list(range(0, len(tokenized_extended_dataset) // 5))
-    upsampled_dataset = upsample_quality_sources(tokenized_extended_dataset, quality_indices)
-    
-    trainer_final = CustomTrainer(
-        model=model,
-        args=training_args_extension,
-        data_collator=data_collator,
-        train_dataset=upsampled_dataset,
-        tokenizer=base_tokenizer,
-        optimizers=(optimizer_extension, None)
-    )
-    
-    trainer_final.train()
-    
-    # Ensure final checkpoint directory exists and is empty
     import shutil
-    final_model_path = "final_mosaic_bert"
+    final_model_path = "final_mosaic_bert_smaller_pretrain2"
     shutil.rmtree(final_model_path, ignore_errors=True)
     os.makedirs(final_model_path)
     
-    trainer_final.save_model(final_model_path)
+    trainer_extension.save_model(final_model_path)
     base_tokenizer.save_pretrained(final_model_path)
     
-    # Periodic memory cleanup
     cleanup_memory()
     log_memory_usage(logging)
-
-    # Final stages of training remain the same
     wandb.finish()
 
 if __name__ == "__main__":
