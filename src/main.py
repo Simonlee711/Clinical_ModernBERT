@@ -7,6 +7,7 @@ import logging
 import random
 import math
 import shutil
+import time
 
 import pandas as pd
 import numpy as np
@@ -38,7 +39,7 @@ import GPUtil
 # Set environment variables for efficient processing
 os.environ["HF_HOME"] = "./home"
 os.environ["HF_HUB_CACHE"] = "./home/hf_cache"
-os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+os.environ["CUDA_VISIBLE_DEVICES"] = "3"
 os.environ["TRANSFORMERS_OFFLINE"] = "1"
 os.environ["HF_DATASETS_OFFLINE"] = "1"
 
@@ -279,7 +280,8 @@ def extract_article_data(article):
 def parse_pubmed_xml_file(file):
     logging.info(f"Parsing {file}")
     records = []
-    with gzip.open(file, 'rb') as f:
+    # Opening the file as plain XML rather than gzipped
+    with open(file, 'rb') as f:
         context = etree.iterparse(f, tag='PubmedArticle')
         for _, elem in context:
             record = extract_article_data(elem)
@@ -300,7 +302,6 @@ def load_pubmed_and_clean(pubmed_glob, num_workers=8):
     logging.info(f"Loaded {df.shape[0]} PubMed articles with clinical text.")
     return df
 
-# Other existing utility functions remain the same (extract_article_data, parse_pubmed_xml_file, etc.)
 
 def load_data():
     discharge_path = "./data/mimic-note/discharge.csv.gz"
@@ -323,7 +324,7 @@ def load_data():
     discharge = discharge[["clinical_text"]]
     radiology = radiology[["clinical_text"]]
     pubmed = pubmed[["clinical_text"]]
-    combined = pd.concat([discharge, radiology, pubmed, icd_code, procedure_code, hcpcs_code], ignore_index=True) # 
+    combined = pd.concat([ discharge, radiology, pubmed, icd_code, procedure_code, hcpcs_code], ignore_index=True) # discharge, radiology, pubmed,
     logging.info(f"Final combined dataset shape: {combined.shape}")
     return combined
 
@@ -361,7 +362,7 @@ def main():
     # Initialize wandb
     gc.collect()
     wandb.init(
-        project="MosaicBERT-Pretraining", 
+        project="BioClinical ModernBERT", 
         name="clinical-text-pretraining",
         config={
             "model_type": "MosaicBERT",
@@ -379,26 +380,22 @@ def main():
     # Custom checkpoint saving function
     def save_comprehensive_checkpoint(trainer, checkpoint_dir):
         import os
-        import time
-        
         # Create a unique checkpoint directory
         os.makedirs(checkpoint_dir, exist_ok=True)
-
-        # Save model weights
-        trainer.save_model(checkpoint_dir)
-
+        
+        # Save model weights directly without recursive call
+        trainer.model.save_pretrained(checkpoint_dir)
+        
         # Explicitly save tokenizer files
-        tokenizer = trainer.tokenizer
-        tokenizer.save_pretrained(checkpoint_dir)
-
+        trainer.tokenizer.save_pretrained(checkpoint_dir)
+        
         # Logging for verification
         logging.info(f"Saved comprehensive checkpoint to {checkpoint_dir}")
         
         # List and log saved files
-        saved_files = os.listdir(checkpoint_dir)
-        for file in saved_files:
+        for file in os.listdir(checkpoint_dir):
             logging.info(f"Saved file: {file}")
-
+    
     # Custom Trainer with enhanced checkpoint saving
     class CustomTrainer(Trainer):
         def save_model(self, output_dir=None, _internal_call=False):
@@ -478,24 +475,24 @@ def main():
         mlm_probability=0.30
     )
     
-    initial_batch_size = 64
+    initial_batch_size = 512
     
     training_args = TrainingArguments(
         output_dir="checkpoints_mosaic_bert",
         overwrite_output_dir=True,
         run_name="mosaicbert_pretrain",
-        num_train_epochs=100,
+        num_train_epochs=1,
         per_device_train_batch_size=initial_batch_size,
         save_strategy="steps",
-        save_steps=500000,
-        logging_steps=1000,
+        save_steps=5000000,
+        logging_steps=1000000,
         learning_rate=8e-4,
         bf16=True,
-        report_to=[],  # Removed wandb
+        report_to=["wandb"],  # Removed wandb
         save_total_limit=None,
         remove_unused_columns=False,
         local_rank=-1,
-        dataloader_num_workers=4,
+        dataloader_num_workers=20,
         fp16_backend="auto",
         no_cuda=False,
         optim="adamw_torch"
@@ -559,18 +556,18 @@ def main():
         output_dir="checkpoints_mosaic_bert_extended",
         overwrite_output_dir=True,
         run_name="mosaicbert_context_extension",
-        num_train_epochs=100,
+        num_train_epochs=1,
         per_device_train_batch_size=64,
         save_strategy="steps",
-        save_steps=100000,
-        logging_steps=1000,
+        save_steps=50000,
+        logging_steps=100000,
         learning_rate=5e-5,
         bf16=True,
-        report_to=[],  # Removed wandb
+        report_to=["wandb"],  # Removed wandb
         save_total_limit=None,
         remove_unused_columns=False,
         local_rank=-1,
-        dataloader_num_workers=4,
+        dataloader_num_workers=20,
         fp16_backend="auto",
         no_cuda=False,
     )
