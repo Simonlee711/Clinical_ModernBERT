@@ -8,7 +8,7 @@ This repository contains the official implementation and [pre-trained weights](h
 
 ## Overview
 
-Clinical ModernBERT builds upon ModernBERT's enhancements, including:
+Clinical ModernBERT (**137M Parameters**) uses ModernBERT's enhancements, including:
 
 - **Extended Context Length (8,192 tokens):** Accommodates lengthy clinical documents such as discharge summaries and comprehensive patient narratives.
 - **Rotary Positional Embeddings (RoPE):** Facilitates efficient modeling of long-range dependencies critical for clinical text understanding.
