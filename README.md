@@ -40,24 +40,6 @@ tokenizer = AutoTokenizer.from_pretrained('Simonlee711/Clinical_ModernBERT')
 
 # Pre-Training Details
 
-## Experimental Results
-
-Clinical ModernBERT achieves state-of-the-art results across several biomedical NLP benchmarks:
-
-| Task                        | Metric   | Clinical ModernBERT | BioClinicalBERT | BioBERT |
-|-----------------------------|----------|---------------------|-----------------|---------|
-| EHR Classification          | AUROC    | **0.9769**          | 0.9678          | 0.9680  |
-| PubMed-NCT                  | Accuracy | **0.9209**          | 0.9145          | 0.9179  |
-| MedNER                      | F1 Score | 0.766               | 0.710           | **0.794**   |
-| PMC-Patients Retrieval      | NDCG@10  | **0.2167**          | 0.1512          | 0.1956  |
-
-## Visualization
-
-Clinical ModernBERT provides clear semantic clustering for ICD codes, outperforming general-domain models significantly in capturing the inherent structure of medical terminologies.
-
-![ICD Code Latent Space Visualization](images/final-tsne-side-by-side.png)
-
-
 ## Reproducing the pre-training
 
 <details>
@@ -97,6 +79,23 @@ To execute the scripts, run:
 ```bash
 CUDA_VISIBLE_DEVICES=1 python3 pre-train.py
 ```
+
+## Experimental Results
+
+Clinical ModernBERT achieves state-of-the-art results across several biomedical NLP benchmarks:
+
+| Task                        | Metric   | Clinical ModernBERT | BioClinicalBERT | BioBERT |
+|-----------------------------|----------|---------------------|-----------------|---------|
+| EHR Classification          | AUROC    | **0.9769**          | 0.9678          | 0.9680  |
+| PubMed-NCT                  | Accuracy | **0.9209**          | 0.9145          | 0.9179  |
+| MedNER                      | F1 Score | 0.766               | 0.710           | **0.794**   |
+| PMC-Patients Retrieval      | NDCG@10  | **0.2167**          | 0.1512          | 0.1956  |
+
+## Visualization
+
+Clinical ModernBERT provides clear semantic clustering for medical codes, outperforming general-domain models significantly in capturing the inherent structure of medical terminologies.
+
+![ICD Code Latent Space Visualization](images/final-tsne-side-by-side.png)
 
 ---
 
