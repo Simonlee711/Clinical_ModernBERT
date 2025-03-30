@@ -1,4 +1,6 @@
 # Clinical_ModernBERT
+![GitHub](https://img.shields.io/github/license/Simonlee711/Clinical_ModernBERT)
+[![Hugging Face](https://img.shields.io/badge/Hugging%20Face-yellow.svg?logo=smiley)](https://huggingface.co/Simonlee711/Clinical_ModernBERT)
 ---
 
 We introduce Clinical ModernBERT, a novel transformer-based encoder pretrained on large-scale biomedical literature and clinical notes, leveraging both PubMed abstracts and MIMIC-IV data. Building upon ModernBERT, which represents the current state-of-the-art in encoder efficiency through innovations such as RoPE positional encoding, flash attention, and extended context length, our model adapts these advancements specifically to biomedical and clinical domains. Although recent progress in generative language modeling has predominantly focused on decoder-based architectures, we argue that encoder-based transformers remain highly relevant and effective—particularly in biomedical and clinical applications. Models such as Clinical ModernBERT inherently excel at producing semantically rich representations, essential for tasks including retrieval-augmented generation (RAG), commonly employed in evidence-based clinical protocols; fine-grained text classification of long-range patient narratives; and domain-specific information extraction tasks benefiting from enhanced representational capacity.
