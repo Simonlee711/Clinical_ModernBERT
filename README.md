@@ -45,6 +45,8 @@ tokenizer = AutoTokenizer.from_pretrained('Simonlee711/Clinical_ModernBERT')
 <details>
 <summary>Pre-training Datasources</summary>
 
+The data composes of ~13,000,000,000 billion tokens
+
 - **[PubMed Abstracts (up to 2025)](https://ftp.ncbi.nlm.nih.gov/pubmed/baseline/)**  
   Biomedical literature metadata and abstracts from NLM's PubMed baseline. A primary source for pretraining language models on scientific discourse.
 
