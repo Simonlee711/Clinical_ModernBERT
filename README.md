@@ -75,6 +75,18 @@ Clinical ModernBERT provides clear semantic clustering for ICD codes, outperform
 - **[ICD-10-CM Medication Codes](https://www.cdc.gov/nchs/icd/icd-10-cm/files.html)**  
   U.S. Clinical Modification of ICD-10 providing detailed coding for drugs, toxic agents, and pharmacologic categories. Valuable for aligning text spans to standardized medication representations.
 
+The Code Ontologies Pre-training Text Was constructed in the following way: 
+
+``` 
+ICD [VERSION] code for [CODE]: [DESCRIPTION] 
+```
+
+**Example:**
+
+``` 
+ICD 9 code for 250.00: Diabetes mellitus without mention of complication, type II or unspecified type, not stated as uncontrolled.
+```
+
 </details>
 
 
