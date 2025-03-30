@@ -55,7 +55,7 @@ Clinical ModernBERT achieves state-of-the-art results across several biomedical 
 
 Clinical ModernBERT provides clear semantic clustering for ICD codes, outperforming general-domain models significantly in capturing the inherent structure of medical terminologies.
 
-![ICD Code Latent Space Visualization](images/final-tsne-side-by-side2.png)
+![ICD Code Latent Space Visualization](images/final-tsne-side-by-side.png)
 
 
 ## Reproducing the pre-training
