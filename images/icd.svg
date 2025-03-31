@@ -1,0 +1,77 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 380">
+  <!-- Background -->
+  <rect width="800" height="380" fill="#f8f9fa" rx="10" ry="10" />
+  
+  <!-- Table Header -->
+  <rect x="50" y="40" width="350" height="40" fill="#4285f4" rx="5" ry="5" />
+  <text x="70" y="65" font-family="Arial" font-size="14" fill="white">Version</text>
+  <text x="170" y="65" font-family="Arial" font-size="14" fill="white">Code</text>
+  <text x="270" y="65" font-family="Arial" font-size="14" fill="white">Description</text>
+  
+  <!-- Table Rows -->
+  <rect x="50" y="80" width="350" height="40" fill="white" stroke="#ddd" />
+  <text x="70" y="105" font-family="Arial" font-size="12">ICD-9</text>
+  <text x="170" y="105" font-family="Arial" font-size="12">410.0</text>
+  <text x="270" y="105" font-family="Arial" font-size="12" textLength="120">Acute myocardial infarction</text>
+  
+  <rect x="50" y="120" width="350" height="40" fill="#f5f5f5" stroke="#ddd" />
+  <text x="70" y="145" font-family="Arial" font-size="12">ICD-10</text>
+  <text x="170" y="145" font-family="Arial" font-size="12">J18.9</text>
+  <text x="270" y="145" font-family="Arial" font-size="12" textLength="120">Pneumonia, unspecified</text>
+  
+  <rect x="50" y="160" width="350" height="40" fill="white" stroke="#ddd" />
+  <text x="70" y="185" font-family="Arial" font-size="12">ICD-11</text>
+  <text x="170" y="185" font-family="Arial" font-size="12">5A60</text>
+  <text x="270" y="185" font-family="Arial" font-size="12" textLength="120">Type 2 diabetes mellitus</text>
+  
+  <rect x="50" y="200" width="350" height="40" fill="#f5f5f5" stroke="#ddd" />
+  <text x="70" y="225" font-family="Arial" font-size="12">ICD-12</text>
+  <text x="170" y="225" font-family="Arial" font-size="12">M54.5</text>
+  <text x="270" y="225" font-family="Arial" font-size="12" textLength="120">Low back pain</text>
+  
+  <!-- Arrow -->
+  <path d="M 425 160 L 500 160" stroke="#333" stroke-width="2" fill="none" marker-end="url(#arrowhead)" />
+  <defs>
+    <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#333" />
+    </marker>
+  </defs>
+  <text x="440" y="145" font-family="Arial" font-size="12" fill="#333">Integration</text>
+  <text x="440" y="160" font-family="Arial" font-size="12" fill="#333">Process</text>
+  
+  <!-- Sentences Box -->
+  <rect x="520" y="40" width="250" height="250" fill="white" stroke="#333" stroke-width="1" rx="5" ry="5" />
+  
+  <!-- Sentence 1 -->
+  <rect x="530" y="50" width="230" height="50" fill="#f0f7ff" rx="3" ry="3" />
+  <text x="535" y="70" font-family="Arial" font-size="11" fill="#333">
+    <tspan x="535" dy="0">The ICD-9 code 410.0 represents acute</tspan>
+    <tspan x="535" dy="15">myocardial infarction, commonly known</tspan>
+    <tspan x="535" dy="15">as a heart attack.</tspan>
+  </text>
+  
+  <!-- Sentence 2 -->
+  <rect x="530" y="110" width="230" height="50" fill="#f0f7ff" rx="3" ry="3" />
+  <text x="535" y="130" font-family="Arial" font-size="11" fill="#333">
+    <tspan x="535" dy="0">In ICD-10, the code J18.9 is used for</tspan>
+    <tspan x="535" dy="15">pneumonia when the specific organism</tspan>
+    <tspan x="535" dy="15">causing the infection is not identified.</tspan>
+  </text>
+  
+  <!-- Sentence 3 -->
+  <rect x="530" y="170" width="230" height="50" fill="#f0f7ff" rx="3" ry="3" />
+  <text x="535" y="190" font-family="Arial" font-size="11" fill="#333">
+    <tspan x="535" dy="0">Type 2 diabetes mellitus is designated</tspan>
+    <tspan x="535" dy="15">by code 5A60 in the ICD-11 classification</tspan>
+    <tspan x="535" dy="15">system.</tspan>
+  </text>
+  
+  <!-- Sentence 4 -->
+  <rect x="530" y="230" width="230" height="50" fill="#f0f7ff" rx="3" ry="3" />
+  <text x="535" y="250" font-family="Arial" font-size="11" fill="#333">
+    <tspan x="535" dy="0">Low back pain, a common condition</tspan>
+    <tspan x="535" dy="15">affecting the lumbar region, is represented</tspan>
+    <tspan x="535" dy="15">by code M54.5 in ICD-12.</tspan>
+  </text>
+  
+</svg>
