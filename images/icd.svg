@@ -36,8 +36,7 @@
       <polygon points="0 0, 10 3.5, 0 7" fill="#333" />
     </marker>
   </defs>
-  <text x="440" y="145" font-family="Arial" font-size="12" fill="#333">Integration</text>
-  <text x="440" y="160" font-family="Arial" font-size="12" fill="#333">Process</text>
+  <text x="425" y="145" font-family="Arial" font-size="12" fill="#333">Conversion</text>
   
   <!-- Sentences Box -->
   <rect x="520" y="40" width="250" height="250" fill="white" stroke="#333" stroke-width="1" rx="5" ry="5" />
@@ -61,17 +60,17 @@
   <!-- Sentence 3 -->
   <rect x="530" y="170" width="230" height="50" fill="#f0f7ff" rx="3" ry="3" />
   <text x="535" y="190" font-family="Arial" font-size="11" fill="#333">
-    <tspan x="535" dy="0">...</tspan>
-    <tspan x="535" dy="15">...</tspan>
-    <tspan x="535" dy="15">...</tspan>
+    <tspan x="535" dy="0">........................................................................</tspan>
+    <tspan x="535" dy="15">........................................................................</tspan>
+    <tspan x="535" dy="15">........................................................................</tspan>
   </text>
   
   <!-- Sentence 4 -->
   <rect x="530" y="230" width="230" height="50" fill="#f0f7ff" rx="3" ry="3" />
   <text x="535" y="250" font-family="Arial" font-size="11" fill="#333">
-    <tspan x="535" dy="0">...</tspan>
-    <tspan x="535" dy="15">...</tspan>
-    <tspan x="535" dy="15">...</tspan>
+    <tspan x="535" dy="0">........................................................................</tspan>
+    <tspan x="535" dy="15">........................................................................</tspan>
+    <tspan x="535" dy="15">........................................................................</tspan>
   </text>
   
 </svg>
