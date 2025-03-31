@@ -53,7 +53,7 @@
   <!-- Sentence 2 -->
   <rect x="530" y="110" width="230" height="50" fill="#f0f7ff" rx="3" ry="3" />
   <text x="535" y="130" font-family="Arial" font-size="11" fill="#333">
-    <tspan x="535" dy="0">In ICD-10, the code J18.9 is used for</tspan>
+    <tspan x="535" dy="0">The ICD-10 code J18.9 represents</tspan>
     <tspan x="535" dy="15">pneumonia when the specific organism</tspan>
     <tspan x="535" dy="15">causing the infection is not identified.</tspan>
   </text>
@@ -61,17 +61,17 @@
   <!-- Sentence 3 -->
   <rect x="530" y="170" width="230" height="50" fill="#f0f7ff" rx="3" ry="3" />
   <text x="535" y="190" font-family="Arial" font-size="11" fill="#333">
-    <tspan x="535" dy="0">Type 2 diabetes mellitus is designated</tspan>
-    <tspan x="535" dy="15">by code 5A60 in the ICD-11 classification</tspan>
-    <tspan x="535" dy="15">system.</tspan>
+    <tspan x="535" dy="0">...</tspan>
+    <tspan x="535" dy="15">...</tspan>
+    <tspan x="535" dy="15">...</tspan>
   </text>
   
   <!-- Sentence 4 -->
   <rect x="530" y="230" width="230" height="50" fill="#f0f7ff" rx="3" ry="3" />
   <text x="535" y="250" font-family="Arial" font-size="11" fill="#333">
-    <tspan x="535" dy="0">Low back pain, a common condition</tspan>
-    <tspan x="535" dy="15">affecting the lumbar region, is represented</tspan>
-    <tspan x="535" dy="15">by code M54.5 in ICD-12.</tspan>
+    <tspan x="535" dy="0">...</tspan>
+    <tspan x="535" dy="15">...</tspan>
+    <tspan x="535" dy="15">...</tspan>
   </text>
   
 </svg>
