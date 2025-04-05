@@ -488,22 +488,19 @@ base_tokenizer = AutoTokenizer.from_pretrained("./models/ModernBERT-base/")
 
 def main():
     gc.collect()
-    resume_checkpoint = os.environ.get("RESUME_CHECKPOINT", None)  # Optionally set an env variable to resume
-    
+    resume_checkpoint = os.environ.get("RESUME_CHECKPOINT", None)
+
     wandb.init(
-        project="BioClinical ModernBERT_e2e2", 
+        project="BioClinical ModernBERT",
         name="clinical-text-pretraining",
         config={
             "model_type": "MosaicBERT",
             "context_length": 8192,
             "initial_learning_rate": 3e-4,
-            "extended_learning_rate": 1e-5,
             "batch_size_initial": get_dynamic_batch_size(),
-            "batch_size_extended": get_dynamic_batch_size(initial_batch_size=128),
             "mlm_probability": 0.30,
             "warmup_ratio": 0.1,
             "epochs_initial": 50,
-            "epochs_extended": 50,
             "gradient_accumulation_steps": 4
         }
     )
@@ -515,48 +512,48 @@ def main():
         logging.info(f"Saved comprehensive checkpoint to {checkpoint_dir}")
         for file in os.listdir(checkpoint_dir):
             logging.info(f"Saved file: {file}")
-    
+
     log_memory_usage(logging)
-    os.makedirs("checkpoints_mosaic_bert_smaller_pretrain2", exist_ok=True)
-    os.makedirs("final_mosaic_bert_smaller_pretrain2", exist_ok=True)
-    
+    os.makedirs("checkpoints_mosaic_bert_smaller_pretrain", exist_ok=True)
+    os.makedirs("final_mosaic_bert_smaller_pretrain", exist_ok=True)
+
     df = load_data()
     logging.info(f"Using a subset of data: {df.shape[0]} records")
     avg_len = df["clinical_text"].swifter.apply(lambda x: len(x.split())).mean()
     mem_mb = df.memory_usage(deep=True).sum() / (1024 ** 2)
     logging.info(f"Average token count: {avg_len:.2f}")
     logging.info(f"DataFrame memory usage: {mem_mb:.2f} MB")
-    
+
     df = df.reset_index(drop=True)
     dataset = Dataset.from_pandas(df)
-    
+
     def tokenize_function(examples):
         return base_tokenizer(
-            examples["clinical_text"], 
-            truncation=True, 
-            padding="max_length", 
+            examples["clinical_text"],
+            truncation=True,
+            padding="max_length",
             max_length=128,
             return_tensors='pt'
         )
-    
+
     tokenized_dataset = dataset.map(
-        tokenize_function, 
-        batched=True, 
-        num_proc=20, 
+        tokenize_function,
+        batched=True,
+        num_proc=20,
         remove_columns=["clinical_text"]
     )
     tokenized_dataset = tokenized_dataset.remove_columns(
         [col for col in tokenized_dataset.column_names if col.startswith("__")]
     )
     tokenized_dataset = tokenized_dataset.with_format("torch")
-    
+
     vocab_size_before = len(base_tokenizer)
     padding_needed = (64 - (vocab_size_before % 64)) % 64
     if padding_needed != 0:
         dummy_tokens = [f"<dummy_extra_token_{i}>" for i in range(padding_needed)]
         base_tokenizer.add_tokens(dummy_tokens, special_tokens=False)
     logging.info(f"Tokenizer vocab size is now {len(base_tokenizer)} (was {vocab_size_before})")
-    
+
     config = MosaicBertConfig.from_pretrained("./models/ModernBERT-base")
     config.vocab_size = len(base_tokenizer)
     config.attention_probs_dropout_prob = 0.0
@@ -567,21 +564,19 @@ def main():
     config.use_low_precision_layernorm = True
     config.rope_theta = 10000
     config.context_length = 1024
-    
+
     model = MosaicBertForMaskedLM.from_pretrained("./models/ModernBERT-base", config=config)
     model.resize_token_embeddings(len(base_tokenizer))
-    
-    # Use the dynamic collator with a schedule from 0.30 to 0.15 over epochs.
-    initial_epochs = 50
+
     data_collator = DynamicDataCollatorForLanguageModeling(
         tokenizer=base_tokenizer,
         initial_mlm_probability=0.30,
         final_mlm_probability=0.15,
-        total_epochs=initial_epochs
+        total_epochs=wandb.config.epochs_initial
     )
-    
+
     training_params = calculate_training_parameters(dataset)
-    
+
     training_args = TrainingArguments(
         output_dir="checkpoints_mosaic_bert_smaller_pretrain",
         overwrite_output_dir=True,
@@ -603,10 +598,10 @@ def main():
         no_cuda=False,
         optim="adamw_torch"
     )
-    
+
     num_training_steps = len(tokenized_dataset) * training_args.num_train_epochs // training_args.per_device_train_batch_size
     num_warmup_steps = int(0.1 * num_training_steps)
-    
+
     no_decay = ["bias", "LayerNorm.weight"]
     optimizer_grouped_parameters = [
         {
@@ -618,7 +613,7 @@ def main():
             "weight_decay": 0.0,
         },
     ]
-    
+
     optimizer = StableAdamW(
         optimizer_grouped_parameters,
         lr=5e-4,
@@ -627,7 +622,7 @@ def main():
         weight_decay=0.01,
         clipping_threshold=1.0
     )
-    
+
     trainer = CustomTrainer(
         model=model,
         args=training_args,
@@ -636,114 +631,23 @@ def main():
         tokenizer=base_tokenizer,
         optimizers=(optimizer, None)
     )
-    
-    # Add dynamic masking callback.
+
     trainer.add_callback(DynamicMaskingCallback(data_collator))
-    
+
     lr_scheduler = create_cosine_lr_scheduler(
-        trainer.optimizer, 
-        num_training_steps=num_training_steps, 
+        trainer.optimizer,
+        num_training_steps=num_training_steps,
         num_warmup_steps=num_warmup_steps
     )
     trainer.lr_scheduler = lr_scheduler
-    
+
     trainer.train(resume_from_checkpoint=resume_checkpoint)
-    
-    logging.info("Clearing GPU memory after phase one")
-    del trainer
-    torch.cuda.empty_cache()
-    
-    logging.info("Starting context length extension phase")
-    config.rope_theta = 160000
-    config.context_length = 2048
-    
-    extended_dataset = create_extended_context_dataset(dataset, max_length=2048)
-    
-    def tokenize_extended_function(examples):
-        return base_tokenizer(
-            examples["clinical_text"], 
-            truncation=True, 
-            padding="max_length", 
-            max_length=2048
-        )
-    
-    tokenized_extended_dataset = extended_dataset.map(
-        tokenize_extended_function, 
-        batched=True, 
-        num_proc=20, 
-        remove_columns=["clinical_text"]
-    )
-    tokenized_extended_dataset = tokenized_extended_dataset.with_format("torch")
-    
-    extended_training_params = calculate_training_parameters(
-        extended_dataset, 
-        base_batch_size=16, 
-        memory_limit_gb=32, 
-        tokens_per_sample=2048
-    )
-    
-    training_args_extension = TrainingArguments(
-        output_dir="checkpoints_mosaic_bert_extended_smaller_pretrain",
-        overwrite_output_dir=True,
-        run_name="mosaicbert_context_extension",
-        num_train_epochs=extended_training_params["epochs"],
-        per_device_train_batch_size=extended_training_params["batch_size"],
-        gradient_accumulation_steps=wandb.config.gradient_accumulation_steps,
-        save_strategy="steps",
-        save_steps=20000,
-        logging_steps=20000,
-        learning_rate=1e-5,
-        bf16=True,
-        report_to=["wandb"],
-        save_total_limit=None,
-        remove_unused_columns=False,
-        local_rank=-1,
-        dataloader_num_workers=20,
-        fp16_backend="auto",
-        no_cuda=False,
-    )
-    
-    num_extended_steps = extended_training_params["total_steps"]
-    num_extended_warmup_steps = extended_training_params["warmup_steps"]
-    
-    optimizer_extension = StableAdamW(
-        optimizer_grouped_parameters,
-        lr=3e-5,
-        betas=(0.9, 0.999),
-        eps=1e-8,
-        weight_decay=0.01,
-        clipping_threshold=1.0
-    )
-    
-    trainer_extension = CustomTrainer(
-        model=model,
-        args=training_args_extension,
-        data_collator=data_collator,
-        train_dataset=tokenized_extended_dataset,
-        tokenizer=base_tokenizer,
-        optimizers=(optimizer_extension, None)
-    )
-    
-    lr_scheduler_extension = create_cosine_lr_scheduler(
-        trainer_extension.optimizer, 
-        num_training_steps=num_extended_steps, 
-        num_warmup_steps=num_extended_warmup_steps
-    )
-    trainer_extension.lr_scheduler = lr_scheduler_extension
-    
-    trainer_extension.train()
-    
-    import shutil
-    final_model_path = "final_mosaic_bert_smaller_pretrain2"
-    shutil.rmtree(final_model_path, ignore_errors=True)
-    os.makedirs(final_model_path)
-    
-    trainer_extension.save_model(final_model_path)
-    base_tokenizer.save_pretrained(final_model_path)
-    
+
+    logging.info("Saving final model after pretraining")
+    trainer.save_model("final_mosaic_bert_smaller_pretrain")
+    base_tokenizer.save_pretrained("final_mosaic_bert_smaller_pretrain")
+
     cleanup_memory()
     log_memory_usage(logging)
     wandb.finish()
 
-if __name__ == "__main__":
-    main()
