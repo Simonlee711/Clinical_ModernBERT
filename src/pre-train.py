@@ -482,7 +482,7 @@ def load_data():
     #combined = combined.sample(100)
     return combined
 
-wandb.login(key="0d3cef273ac07263f8b9035513b8693a26308dce")
+wandb.login(key=[WANDB_API_KEY])
 logging.basicConfig(level=logging.INFO, format='[%(asctime)s] %(levelname)s: %(message)s')
 base_tokenizer = AutoTokenizer.from_pretrained("./models/ModernBERT-base/")
 
