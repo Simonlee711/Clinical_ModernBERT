@@ -100,7 +100,15 @@ If you find Clinical ModernBERT useful in your work, please cite:
 
 **Paper Citation:**
 ```
-pending
+@misc{lee2025clinicalmodernbertefficientlong,
+      title={Clinical ModernBERT: An efficient and long context encoder for biomedical text}, 
+      author={Simon A. Lee and Anthony Wu and Jeffrey N. Chiang},
+      year={2025},
+      eprint={2504.03964},
+      archivePrefix={arXiv},
+      primaryClass={cs.CL},
+      url={https://arxiv.org/abs/2504.03964}, 
+}
 ```
 
 **Model Card Citation:**
