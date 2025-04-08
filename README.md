@@ -1,6 +1,6 @@
 # Clinical ModernBERT: A Long Context Encoder for Biomedical Text
 ![GitHub](https://img.shields.io/github/license/Simonlee711/Clinical_ModernBERT)
-[![arXiv](https://img.shields.io/badge/arXiv-2504.03964-red.svg)](https://arxiv.org/abs/2504.03964)
+[![arXiv](https://img.shields.io/badge/arXiv-2504.03964-red.svg)](https://huggingface.co/papers/2504.03964)
 [![Hugging Face](https://img.shields.io/badge/Hugging%20Face-yellow.svg?logo=smiley)](https://huggingface.co/Simonlee711/Clinical_ModernBERT)
 ![python](https://img.shields.io/badge/-Python_3.12-blue?logo=python&logoColor=white)
 [![license](https://img.shields.io/badge/License-MIT-green.svg?labelColor=gray)](https://huggingface.co/Simonlee711/Clinical_ModernBERTREPO_NAME#license)
