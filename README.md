@@ -5,7 +5,7 @@
 ![python](https://img.shields.io/badge/-Python_3.12-blue?logo=python&logoColor=white)
 [![license](https://img.shields.io/badge/License-MIT-green.svg?labelColor=gray)](https://huggingface.co/Simonlee711/Clinical_ModernBERTREPO_NAME#license)
 [![PRs](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](https://huggingface.co/Simonlee711/Clinical_ModernBERT/REPO_NAME/pulls)
-[![Hugging Face Model](https://img.shields.io/badge/DeepWiki-blue.svg)](https://deepwiki.com/Simonlee711/Clinical_ModernBERT/3-pre-training-pipeline)
+[![Hugging Face Model](https://img.shields.io/badge/DeepWiki-blue.svg)](https://deepwiki.com/Simonlee711/Clinical_ModernBERT/1-clinical-modernbert-overview)
 
 
 This repository contains the official implementation and [pre-trained weights](https://huggingface.co/Simonlee711/Clinical_ModernBERT) for **Clinical ModernBERT**, a transformer-based encoder optimized for biomedical and clinical natural language processing (NLP) tasks. Our model leverages state-of-the-art innovations from [ModernBERT](https://arxiv.org/abs/2412.13663), adapted specifically to biomedical literature and clinical data.
